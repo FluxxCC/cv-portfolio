@@ -1,21 +1,10 @@
 import type { Metadata } from "next";
-import { Montserrat, Inter } from "next/font/google";
-import "./globals.css";
-
-const inter = Inter({
-  variable: "--font-sans",
-  subsets: ["latin"],
-});
-
-const montserrat = Montserrat({
-  variable: "--font-display",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800", "900"],
-});
+import "./calm-portfolio.css";
 
 export const metadata: Metadata = {
-  title: "Charles | Portfolio",
-  description: "UI/UX Designer and Developer Portfolio",
+  title: "Charles Xander Panis | Full Stack Developer",
+  description:
+    "Full stack developer building practical tools for research and education. Explore RRL Finder, Tabulora, OJTonTrack, Iguide, and CARW.",
 };
 
 export default function RootLayout({
@@ -26,7 +15,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${montserrat.variable} h-full antialiased`}
+      className="h-full antialiased"
     >
       <body suppressHydrationWarning className="relative min-h-full">
         {children}
