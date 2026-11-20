@@ -4,7 +4,7 @@ import "./calm-portfolio.css";
 export const metadata: Metadata = {
   title: "Charles Xander Panis | Full Stack Developer",
   description:
-    "Full stack developer building practical tools for research and education. Explore RRL Finder, Tabulora, OJTonTrack, Iguide, and CARW.",
+    "Full stack developer building practical tools for research and education. Explore RRL Finder, Wash & Fold, Tabulora, Zentra, ARMS, and OJTonTrack.",
 };
 
 export default function RootLayout({

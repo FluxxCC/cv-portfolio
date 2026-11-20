@@ -1,0 +1,732 @@
+/* Explorable 3D world. Everything is prefixed vo- so it cannot leak into the classic page. */
+.vo-root {
+  --vo-ink: #f4f7fd;
+  --vo-muted: #a9b5c9;
+  --vo-line: #ffffff24;
+  --vo-accent: #5fe3ff;
+  --vo-glass: #0c1424d9;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--vo-ink);
+  background: linear-gradient(#58a9ff, #cfeaff 60%, #ffeeda);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.vo-root button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.vo-root :focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+.vo-root kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid #ffffff40;
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: #ffffff14;
+  font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif;
+}
+.vo-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.vo-canvas {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+.vo-root.is-ready .vo-canvas {
+  opacity: 1;
+}
+.vo-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  padding: 24px;
+  text-align: center;
+}
+.vo-fallback a {
+  text-decoration: underline;
+}
+
+/* Loader */
+.vo-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #0b1220;
+  color: var(--vo-muted);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  transition: opacity 0.7s ease, visibility 0.7s;
+}
+.vo-root.is-ready .vo-loader {
+  opacity: 0;
+  visibility: hidden;
+}
+.vo-loader-bar {
+  width: 160px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--vo-accent), transparent);
+  background-size: 200% 100%;
+  animation: vo-slide 1.2s linear infinite;
+}
+@keyframes vo-slide {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+.vo-wordmark {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -1px;
+  color: var(--vo-ink);
+}
+.vo-wordmark b {
+  color: var(--vo-accent);
+}
+
+/* Top bar */
+.vo-hud {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
+}
+.vo-root:not(.is-ready) .vo-hud {
+  opacity: 0;
+}
+.vo-hud > * {
+  pointer-events: auto;
+}
+.vo-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 16px !important;
+  border: 1px solid var(--vo-line) !important;
+  border-radius: 16px;
+  background: var(--vo-glass) !important;
+  backdrop-filter: blur(14px);
+  text-align: left;
+}
+.vo-brand small {
+  color: var(--vo-muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.vo-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border: 1px solid var(--vo-line);
+  border-radius: 999px;
+  background: var(--vo-glass);
+  backdrop-filter: blur(14px);
+  font-size: 13px;
+  color: var(--vo-ink);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.vo-nav button,
+.vo-nav a {
+  flex: none;
+  padding: 8px 14px;
+  border-radius: 999px;
+  color: #d3dbea;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s;
+}
+.vo-nav button:hover,
+.vo-nav a:hover {
+  background: #ffffff1a;
+  color: #fff;
+}
+.vo-nav button.is-current {
+  background: #fff;
+  color: #0b1220;
+  font-weight: 600;
+}
+.vo-nav .vo-classic {
+  margin-left: 4px;
+  border-left: 1px solid var(--vo-line);
+  border-radius: 0 999px 999px 0;
+  color: var(--vo-muted);
+}
+
+/* Welcome card */
+.vo-welcome {
+  position: absolute;
+  left: 24px;
+  bottom: 24px;
+  z-index: 26;
+  width: min(460px, calc(100% - 48px));
+  padding: 26px;
+  border: 1px solid var(--vo-line);
+  border-radius: 24px;
+  background: var(--vo-glass);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 30px 80px #0b122066;
+  transition: opacity 0.5s ease, transform 0.5s ease, visibility 0.5s;
+  user-select: text;
+}
+.vo-root:not(.is-ready) .vo-welcome,
+.vo-root:not(.is-intro) .vo-welcome {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(20px);
+}
+.vo-available {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--vo-line);
+  border-radius: 999px;
+  color: #d3dbea;
+  font-size: 12px;
+}
+.vo-available i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5be49b;
+  box-shadow: 0 0 0 4px #5be49b33;
+}
+.vo-name {
+  margin: 16px 0 10px;
+  font-size: clamp(34px, 4.2vw, 54px);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--vo-ink);
+}
+.vo-name em {
+  font-style: normal;
+  color: var(--vo-accent);
+}
+.vo-intro-copy {
+  margin: 0;
+  color: #c3cddd;
+  font-size: 15px;
+  line-height: 1.6;
+}
+.vo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+.vo-button,
+.vo-root .vo-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 22px;
+  border-radius: 999px;
+  background: var(--tone, var(--vo-accent));
+  color: #07131f;
+  font-weight: 700;
+  font-size: 15px;
+  transition: transform 0.2s, filter 0.2s;
+}
+.vo-button:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+.vo-root .vo-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 20px;
+  border: 1px solid #ffffff40;
+  border-radius: 999px;
+  color: var(--vo-ink);
+  font-weight: 600;
+  font-size: 15px;
+}
+.vo-root .vo-ghost:hover {
+  background: #ffffff1a;
+}
+
+/* Name tags pinned above landmarks */
+.vo-tags {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+.vo-root:not(.is-ready) .vo-tags,
+.vo-root.is-focused .vo-tags {
+  opacity: 0;
+}
+.vo-root.is-focused .vo-tag {
+  pointer-events: none;
+}
+.vo-root .vo-tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px 7px 10px;
+  border: 1px solid #ffffff38;
+  border-radius: 999px;
+  background: var(--vo-glass);
+  color: #fff;
+  font: 600 12.5px Inter, ui-sans-serif, system-ui, sans-serif;
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 26px #0b122055;
+  transition: scale 0.2s, background 0.2s, color 0.2s;
+}
+.vo-tag i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--tone);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 30%, transparent);
+}
+.vo-tag.is-seen i {
+  background: #fff;
+  box-shadow: 0 0 0 2px var(--tone);
+}
+.vo-root .vo-tag.is-hot,
+.vo-root .vo-tag:hover {
+  background: #fff;
+  color: #0b1220;
+  scale: 1.08;
+}
+
+/* Bottom bar */
+.vo-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  z-index: 24;
+  translate: -50% 0;
+  transition: opacity 0.4s ease;
+}
+.vo-root:not(.is-explore) .vo-dock,
+.vo-root.is-focused .vo-dock,
+.vo-root:not(.is-ready) .vo-dock {
+  opacity: 0;
+  pointer-events: none;
+}
+.vo-help {
+  margin: 0;
+  padding: 9px 16px;
+  border: 1px solid var(--vo-line);
+  border-radius: 999px;
+  background: var(--vo-glass);
+  backdrop-filter: blur(12px);
+  color: #d3dbea;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.vo-help-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.vo-help-touch {
+  display: none;
+}
+.vo-root .vo-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 22px 13px 14px;
+  border-radius: 999px;
+  background: #fff;
+  color: #0b1220;
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--tone) 55%, transparent), 0 18px 40px #0b122066;
+  animation: vo-pop 0.35s cubic-bezier(0.22, 1.4, 0.36, 1);
+}
+.vo-prompt kbd {
+  border-color: #0b122040;
+  background: var(--tone);
+  color: #07131f;
+}
+@keyframes vo-pop {
+  from { scale: 0.8; opacity: 0; }
+}
+
+/* Touch joystick */
+.vo-stick {
+  position: absolute;
+  left: 22px;
+  bottom: 22px;
+  z-index: 24;
+  display: none;
+  place-items: center;
+  width: 118px;
+  height: 118px;
+  border: 1px solid #ffffff55;
+  border-radius: 50%;
+  background: #0c142480;
+  backdrop-filter: blur(8px);
+  touch-action: none;
+}
+.vo-stick span {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 6px 18px #0b122066;
+  pointer-events: none;
+}
+@media (pointer: coarse) {
+  .vo-root.is-explore:not(.is-focused) .vo-stick {
+    display: grid;
+  }
+  .vo-help-keys {
+    display: none;
+  }
+  .vo-help-touch {
+    display: inline;
+  }
+}
+
+/* Showcase card */
+.vo-panel {
+  position: absolute;
+  top: 88px;
+  right: 24px;
+  bottom: 24px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  width: min(40vw, 520px);
+  padding: 24px 26px 0;
+  border: 1px solid var(--vo-line);
+  border-top: 4px solid var(--tone);
+  border-radius: 24px;
+  background: #0c1424eb;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 30px 80px #0b122080;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff2e transparent;
+  user-select: text;
+  -webkit-user-select: text;
+  touch-action: pan-y;
+}
+.vo-panel:focus {
+  outline: none;
+}
+.vo-panel-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.vo-kicker {
+  color: var(--tone, var(--vo-accent));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.vo-root .vo-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--vo-line);
+  border-radius: 50%;
+}
+.vo-root .vo-icon:hover {
+  background: #ffffff1a;
+}
+.vo-panel h2 {
+  margin: 12px 0 14px;
+  font-size: clamp(32px, 3.2vw, 46px);
+  font-weight: 800;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+  color: var(--vo-ink);
+}
+.vo-panel h3 {
+  margin: 6px 0;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--vo-ink);
+}
+.vo-panel h3.vo-sub {
+  margin: 22px 0 10px;
+  color: var(--vo-muted);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.vo-panel p {
+  margin: 0 0 12px;
+  color: #c3cddd;
+  font-size: 14.5px;
+  line-height: 1.62;
+}
+.vo-panel .vo-lede {
+  color: #e3e9f4;
+  font-size: 16px;
+}
+.vo-panel-body {
+  flex: 1;
+  padding-bottom: 22px;
+}
+.vo-panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.vo-hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 34%, transparent), #ffffff0a);
+  color: var(--tone);
+  --mark-paper: #0c1424;
+}
+.vo-hero svg {
+  flex: none;
+  width: 84px;
+  height: 84px;
+}
+.vo-hero .vo-summary {
+  margin: 0;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.vo-status {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #ffffff1f;
+  color: #fff;
+  font-size: 11px;
+}
+.vo-features li {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--vo-line);
+  color: #e3e9f4;
+  font-size: 15px;
+}
+.vo-features b {
+  color: var(--tone);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.vo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.vo-chips span {
+  padding: 5px 12px;
+  border: 1px solid var(--vo-line);
+  border-radius: 999px;
+  color: #d3dbea;
+  font-size: 12.5px;
+}
+.vo-chips-lg span {
+  padding: 8px 14px;
+  border-color: color-mix(in srgb, var(--group, var(--tone)) 55%, transparent);
+  background: color-mix(in srgb, var(--group, var(--tone)) 14%, transparent);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.vo-panel .vo-button {
+  margin-top: 24px;
+}
+.vo-group {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid var(--vo-line);
+  border-left: 3px solid var(--group, var(--tone));
+  border-radius: 16px;
+  background: #ffffff08;
+}
+.vo-group:nth-of-type(1) { --group: #22c3e6; }
+.vo-group:nth-of-type(2) { --group: #8f7cf0; }
+.vo-group:nth-of-type(3) { --group: #ff9d6c; }
+.vo-group:nth-of-type(4) { --group: #3fc98a; }
+.vo-group .vo-kicker {
+  color: var(--group, var(--tone));
+}
+.vo-cards {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px !important;
+}
+.vo-cards li {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  border-left: 3px solid var(--tone);
+  border-radius: 12px;
+  background: #ffffff0a;
+}
+.vo-cards strong {
+  color: var(--vo-ink);
+  font-size: 14.5px;
+  font-weight: 700;
+}
+.vo-cards span {
+  color: var(--vo-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.vo-panel .vo-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vo-muted);
+  font-size: 13px;
+}
+.vo-contact {
+  margin-top: 22px !important;
+}
+.vo-contact li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--vo-line);
+  color: var(--tone);
+}
+.vo-contact a {
+  color: var(--vo-ink);
+  font-size: 15px;
+}
+.vo-contact a:hover {
+  color: var(--tone);
+}
+.vo-panel-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 -26px;
+  padding: 14px 26px;
+  border-top: 1px solid var(--vo-line);
+  background: #0c1424;
+  font-size: 13px;
+}
+.vo-root .vo-panel-foot button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  color: #d3dbea;
+}
+.vo-root .vo-panel-foot button:hover {
+  background: #ffffff1a;
+  color: #fff;
+}
+
+@media (max-width: 900px) {
+  .vo-hud {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 12px 12px 0;
+  }
+  .vo-brand {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .vo-welcome {
+    left: 12px;
+    bottom: 12px;
+    width: calc(100% - 24px);
+    padding: 20px;
+  }
+  .vo-root .vo-tag {
+    gap: 6px;
+    padding: 4px 10px 4px 7px;
+    font-size: 11px;
+  }
+  .vo-dock {
+    bottom: 16px;
+  }
+  .vo-root.is-explore .vo-help {
+    display: none;
+  }
+  .vo-panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 60%;
+    padding: 18px 18px 0;
+    border-radius: 24px 24px 0 0;
+  }
+  .vo-panel-foot {
+    margin: 0 -18px;
+    padding: 12px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vo-loader-bar,
+  .vo-prompt {
+    animation: none;
+  }
+}
