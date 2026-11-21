@@ -11,6 +11,9 @@
   background: #ece6dc;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: light;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
 }
 .ro-root button {
   font: inherit;
@@ -136,11 +139,23 @@
   background: var(--tone);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 25%, transparent);
 }
-.ro-root .ro-tag.is-hot,
-.ro-root .ro-tag:hover {
+/* A larger invisible hit area so the tags are easy to tap. */
+.ro-tag::after {
+  content: "";
+  position: absolute;
+  inset: -9px -6px;
+}
+.ro-root .ro-tag.is-hot {
   background: var(--ro-ink);
   color: #fff;
   scale: 1.08;
+}
+@media (hover: hover) {
+  .ro-root .ro-tag:hover {
+    background: var(--ro-ink);
+    color: #fff;
+    scale: 1.08;
+  }
 }
 @keyframes ro-bob {
   50% { translate: 0 -5px; }
@@ -152,7 +167,8 @@
   top: 50%;
   right: clamp(16px, 4vw, 56px);
   z-index: 25;
-  width: min(380px, calc(100% - 32px));
+  /* Keep in step with cardSpace() in room-scene.tsx. */
+  width: min(380px, 42vw);
   max-height: calc(100% - 48px);
   padding: 22px 26px 26px;
   border: 1px solid #ffffff;
@@ -161,6 +177,7 @@
   box-shadow: 0 1px 0 #ffffff inset, 0 24px 60px -12px #5b4a3055, 0 4px 14px #5b4a301a;
   translate: 0 -50%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: none;
   will-change: transform;
 }
@@ -402,17 +419,41 @@
   color: var(--tone);
 }
 
-@media (max-width: 900px) {
+/* Phones held upright: the card becomes a bottom sheet. Matches isWide() in room-scene.tsx. */
+@media (max-width: 639px), (max-width: 900px) and (orientation: portrait) {
   .ro-card {
     top: auto;
     right: 12px;
-    bottom: 14px;
+    bottom: max(14px, env(safe-area-inset-bottom));
     left: 12px;
     width: auto;
     max-height: 48%;
     padding: 18px 20px 20px;
     translate: none;
   }
+}
+/* Short screens (phones on their side): tighten the card so it fits. */
+@media (max-height: 520px) {
+  .ro-card {
+    max-height: calc(100% - 24px);
+    padding: 16px 20px 18px;
+    border-radius: 22px;
+  }
+  .ro-card-top {
+    margin-bottom: 10px;
+  }
+  .ro-root .ro-card h2 {
+    font-size: 26px;
+  }
+  .ro-progress {
+    margin-bottom: 12px;
+  }
+  .ro-actions {
+    margin-top: 14px;
+    padding-top: 12px;
+  }
+}
+@media (max-width: 900px) {
   .ro-project h2 {
     font-size: 30px;
   }

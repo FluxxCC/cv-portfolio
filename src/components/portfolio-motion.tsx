@@ -38,6 +38,11 @@ export function PortfolioMotion({ children }: { children: ReactNode }) {
         return { element, progress, shift: (1 - enter) * 96 - (1 - leave) * 48, scale: 0.94 + 0.06 * progress };
       });
       states.forEach(({ element, progress, shift, scale }) => {
+        // Most blocks are fully on or fully off screen and have not changed; leave them alone
+        // so scrolling only restyles the few that are actually moving.
+        const stamp = `${progress.toFixed(3)}|${shift.toFixed(1)}`;
+        if (element.dataset.textStamp === stamp) return;
+        element.dataset.textStamp = stamp;
         element.style.setProperty("--text-opacity", String(progress));
         element.style.setProperty("--text-shift", `${shift}px`);
         element.style.setProperty("--text-scale", String(scale));
@@ -62,6 +67,7 @@ export function PortfolioMotion({ children }: { children: ReactNode }) {
         element.style.removeProperty("--text-shift");
         element.style.removeProperty("--text-scale");
         delete element.dataset.textShift;
+        delete element.dataset.textStamp;
       });
     };
   }, [reduced]);

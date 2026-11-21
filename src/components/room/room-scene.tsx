@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { BakeShadows, Center, Environment, Float, Html, Instance, Instances, Lightformer, RoundedBox, Text3D, useTexture } from "@react-three/drei";
+import { BakeShadows, Center, Environment, Float, Html, Instance, Instances, Lightformer, PerformanceMonitor, RoundedBox, Text3D, useTexture } from "@react-three/drei";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { projects } from "@/data/projects";
 import { overview, spots, type SpotId } from "./spots";
 
@@ -12,7 +13,10 @@ type SceneProps = {
   /** Index of the project shown on the monitor. */
   project: number;
   reduced: boolean;
-  /** 2 = full effects, 1 = no post-processing, 0 = also lowest resolution. */
+  /** Phones and tablets: lighter shadows and a slower window repaint. */
+  lite: boolean;
+  /** Cheaper lighting: a plain sky light stands in for the reflected environment. */
+  eco: boolean;
   /** Whether the monitor may run live pages (off on phones and tablets). */
   canBrowse: boolean;
   onProject: (index: number) => void;
@@ -38,7 +42,7 @@ function rand(seed: number) {
 
 /* ---------- textures ---------- */
 
-function makeTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void) {
+function makeTexture(width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void, animated = false) {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -47,6 +51,12 @@ function makeTexture(width: number, height: number, draw: (ctx: CanvasRenderingC
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = 8;
+  if (animated) {
+    // Repainted many times a second: skip rebuilding the mipmap chain on every upload.
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.anisotropy = 1;
+  }
   return texture;
 }
 
@@ -361,6 +371,7 @@ const tmpPosition = new THREE.Vector3();
 const tmpLook = new THREE.Vector3();
 const tmpTag = new THREE.Vector3();
 const tagCache: Record<string, string> = {};
+const tagElements: Record<string, HTMLElement | null> = {};
 
 const tmpCamera = new THREE.Vector3();
 const tmpAhead = new THREE.Vector3();
@@ -370,8 +381,10 @@ const tmpPan = new THREE.Vector3();
 const tmpAim = new THREE.Vector3();
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const MOVE_SECONDS = 1.5;
-/** Width the open card takes up on the right, in pixels. */
-const CARD_SPACE = 440;
+/** Side-by-side layout (card on the right). Must match the media query in room.css. */
+const isWide = (width: number, height: number) => width > 900 || (width >= 640 && width > height);
+/** Width the open card takes up on the right, in pixels. Matches the card width in room.css. */
+const cardSpace = (width: number) => Math.min(380, width * 0.42) + 60;
 /** Slow start, slow stop: no sudden jump when the camera sets off. */
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
@@ -393,7 +406,8 @@ function CameraRig({ active, reduced }: { active: SpotId | null; reduced: boolea
     const camera = state.camera as THREE.PerspectiveCamera;
     const { width, height } = state.size;
     const aspect = width / Math.max(height, 1);
-    const wide = width > 900;
+    const wide = isWide(width, height);
+    const CARD_SPACE = cardSpace(width);
     const spot = active ? spots.find(item => item.id === active) : null;
     const r = rig.current;
 
@@ -457,7 +471,11 @@ function CameraRig({ active, reduced }: { active: SpotId | null; reduced: boolea
 
     // Pin the DOM tags (rendered outside the canvas) to their objects.
     for (const item of spots) {
-      const element = document.getElementById(`ro-tag-${item.id}`);
+      let element = tagElements[item.id];
+      if (!element?.isConnected) {
+        element = tagElements[item.id] = document.getElementById(`ro-tag-${item.id}`);
+        delete tagCache[item.id];
+      }
       if (!element) continue;
       tmpTag.set(...item.tag).project(camera);
       const x = (tmpTag.x * 0.5 + 0.5) * width;
@@ -471,6 +489,102 @@ function CameraRig({ active, reduced }: { active: SpotId | null; reduced: boolea
   });
 
   return null;
+}
+
+/* ---------- static batching ---------- */
+
+/** Put on a group that moves on its own, so StaticBatch leaves it alone. */
+const LIVE = { live: true };
+const tmpMatrix = new THREE.Matrix4();
+
+type Bucket = { basic: boolean; roughness: number; cast: boolean; receive: boolean; parts: THREE.BufferGeometry[] };
+
+/**
+ * Each separate mesh is one draw call, and on modest laptops and phones the room is
+ * limited by draw calls, not pixels. This welds every plain, unmoving mesh inside it
+ * into a few meshes (one per surface finish, colours stored per vertex) and hides the
+ * originals. The originals stay in the scene, so pointer picking still works on them.
+ */
+function StaticBatch({ children }: { children: ReactNode }) {
+  const source = useRef<THREE.Group>(null);
+  const target = useRef<THREE.Group>(null);
+
+  useLayoutEffect(() => {
+    const root = source.current;
+    const out = target.current;
+    if (!root || !out) return;
+    root.updateWorldMatrix(true, true);
+    const toLocal = root.matrixWorld.clone().invert();
+    const buckets = new Map<string, Bucket>();
+    const hidden: THREE.Mesh[] = [];
+
+    const visit = (object: THREE.Object3D) => {
+      if (object.userData.live || !object.visible) return;
+      const mesh = object as THREE.Mesh;
+      const material = mesh.material as THREE.MeshStandardMaterial & THREE.MeshBasicMaterial;
+      const standard = Boolean(material?.isMeshStandardMaterial);
+      const plain =
+        mesh.isMesh &&
+        !(mesh as THREE.InstancedMesh).isInstancedMesh &&
+        !Array.isArray(mesh.material) &&
+        (standard || material.isMeshBasicMaterial) &&
+        !material.map &&
+        !material.transparent &&
+        material.toneMapped &&
+        material.side === THREE.FrontSide &&
+        (!standard || (material.metalness === 0 && material.emissive.getHex() === 0)) &&
+        Boolean(mesh.geometry.attributes.normal);
+      if (plain) {
+        const part = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+        for (const name of Object.keys(part.attributes)) if (name !== "position" && name !== "normal") part.deleteAttribute(name);
+        part.applyMatrix4(tmpMatrix.multiplyMatrices(toLocal, mesh.matrixWorld));
+        const count = part.attributes.position.count;
+        const colors = new Float32Array(count * 3);
+        for (let index = 0; index < count; index += 1) material.color.toArray(colors, index * 3);
+        part.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+        // Finishes are grouped in quarter steps; the difference is not visible on these matte surfaces.
+        const roughness = standard ? Math.max(0.25, Math.round(material.roughness * 4) / 4) : 1;
+        const key = `${standard}|${roughness}|${mesh.castShadow}|${mesh.receiveShadow}`;
+        let bucket = buckets.get(key);
+        if (!bucket) buckets.set(key, (bucket = { basic: !standard, roughness, cast: mesh.castShadow, receive: mesh.receiveShadow, parts: [] }));
+        bucket.parts.push(part);
+        hidden.push(mesh);
+      }
+      object.children.forEach(visit);
+    };
+    visit(root);
+
+    const made: THREE.Mesh[] = [];
+    for (const bucket of buckets.values()) {
+      const geometry = mergeGeometries(bucket.parts, false);
+      bucket.parts.forEach(part => part.dispose());
+      if (!geometry) continue;
+      const material = bucket.basic ? new THREE.MeshBasicMaterial({ vertexColors: true }) : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: bucket.roughness });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.castShadow = bucket.cast;
+      mesh.receiveShadow = bucket.receive;
+      mesh.raycast = () => {};
+      out.add(mesh);
+      made.push(mesh);
+    }
+    hidden.forEach(mesh => (mesh.visible = false));
+
+    return () => {
+      hidden.forEach(mesh => (mesh.visible = true));
+      made.forEach(mesh => {
+        out.remove(mesh);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      });
+    };
+  }, []);
+
+  return (
+    <group>
+      <group ref={source}>{children}</group>
+      <group ref={target} />
+    </group>
+  );
 }
 
 /* ---------- interactive wrapper ---------- */
@@ -511,7 +625,7 @@ function Hotspot({ id, position, rotation, hovered, active, onHover, onSelect, c
         onSelect(id);
       }}
     >
-      {children}
+      <StaticBatch>{children}</StaticBatch>
     </group>
   );
 }
@@ -524,12 +638,14 @@ function Shell() {
       <RoundedBox args={[44, 0.5, 44]} radius={0.12} smoothness={4} position={[16.85, -0.25, 17.85]} receiveShadow>
         <meshStandardMaterial color={OAK} roughness={0.7} />
       </RoundedBox>
-      {Array.from({ length: 48 }, (_, index) => (
-        <mesh key={index} position={[-4.5 + index * 0.9, 0.004, 17.85]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[0.018, 44]} />
-          <meshBasicMaterial color={OAK_DARK} transparent opacity={0.55} />
-        </mesh>
-      ))}
+      {/* Floorboard seams: one instanced draw call for all 48. */}
+      <Instances limit={48} frustumCulled={false}>
+        <planeGeometry args={[0.018, 44]} />
+        <meshBasicMaterial color={OAK_DARK} transparent opacity={0.55} />
+        {Array.from({ length: 48 }, (_, index) => (
+          <Instance key={index} position={[-4.5 + index * 0.9, 0.004, 17.85]} rotation={[-Math.PI / 2, 0, 0]} />
+        ))}
+      </Instances>
       <RoundedBox args={[44, 16, 0.3]} radius={0.1} smoothness={4} position={[16.85, 7.75, -4.15]} receiveShadow>
         <meshStandardMaterial color={WALL} roughness={0.95} />
       </RoundedBox>
@@ -626,16 +742,17 @@ function WallName() {
   );
 }
 
-function WindowView({ reduced }: { reduced: boolean }) {
-  const texture = useMemo(() => makeTexture(512, 440, ctx => drawSky(ctx, 4)), []);
+function WindowView({ reduced, lite }: { reduced: boolean; lite: boolean }) {
+  const texture = useMemo(() => makeTexture(512, 440, ctx => drawSky(ctx, 4), true), []);
   const glass = useRef<THREE.MeshBasicMaterial>(null);
   const drawn = useRef(0);
 
-  // Repaint the view outside about 30 times a second; it is one small canvas.
+  // Repaint the view outside about 30 times a second (20 on phones); it is one small canvas.
+  const interval = lite ? 1 / 20 : 1 / 30;
   useFrame(state => {
     const now = state.clock.elapsedTime;
     const map = glass.current?.map;
-    if (reduced || !map || now - drawn.current < 1 / 30) return;
+    if (reduced || !map || now - drawn.current < interval) return;
     drawn.current = now;
     const ctx = (map.image as HTMLCanvasElement).getContext("2d");
     if (!ctx) return;
@@ -758,19 +875,19 @@ function Clock({ reduced }: { reduced: boolean }) {
           </mesh>
         );
       })}
-      <group ref={hour} position={[0, 0, 0.05]}>
+      <group ref={hour} position={[0, 0, 0.05]} userData={LIVE}>
         <mesh position={[0, 0.1, 0]}>
           <boxGeometry args={[0.03, 0.22, 0.01]} />
           <meshBasicMaterial color={INK} />
         </mesh>
       </group>
-      <group ref={minute} position={[0, 0, 0.055]}>
+      <group ref={minute} position={[0, 0, 0.055]} userData={LIVE}>
         <mesh position={[0, 0.15, 0]}>
           <boxGeometry args={[0.02, 0.32, 0.01]} />
           <meshBasicMaterial color={INK} />
         </mesh>
       </group>
-      <group ref={second} position={[0, 0, 0.06]}>
+      <group ref={second} position={[0, 0, 0.06]} userData={LIVE}>
         <mesh position={[0, 0.15, 0]}>
           <boxGeometry args={[0.008, 0.36, 0.01]} />
           <meshBasicMaterial color="#e0607e" />
@@ -950,9 +1067,12 @@ function Monitor({ project, browsing, onProject }: { project: number; browsing: 
         <meshBasicMaterial map={textures[project % textures.length]} toneMapped={false} />
       </mesh>
       {/* The real browser sits exactly on the glass and only shows while the desk is in focus. */}
-      <Html transform position={[0, 1.9, 0.04]} distanceFactor={SCREEN_FACTOR} zIndexRange={[8, 1]} style={{ pointerEvents: browsing ? "auto" : "none" }}>
-        <Browser project={project} on={browsing} onProject={onProject} />
-      </Html>
+      {/* Mounted only then: otherwise its 3D-positioned DOM layer is re-placed on every frame for nothing. */}
+      {browsing && (
+        <Html transform position={[0, 1.9, 0.04]} distanceFactor={SCREEN_FACTOR} zIndexRange={[8, 1]}>
+          <Browser project={project} on onProject={onProject} />
+        </Html>
+      )}
     </group>
   );
 }
@@ -1168,7 +1288,7 @@ function ContactTable({ reduced }: { reduced: boolean }) {
         <meshStandardMaterial color="#e0607e" roughness={0.5} />
       </RoundedBox>
       <Float speed={reduced ? 0 : 2.2} rotationIntensity={reduced ? 0 : 0.5} floatIntensity={reduced ? 0 : 0.9} floatingRange={[0, 0.25]}>
-        <group position={[-0.05, 1.35, 0.02]} rotation={[0.2, 0.5, 0.12]}>
+        <group position={[-0.05, 1.35, 0.02]} rotation={[0.2, 0.5, 0.12]} userData={LIVE}>
           <RoundedBox args={[0.66, 0.44, 0.045]} radius={0.02} castShadow>
             <meshStandardMaterial color="#ffffff" roughness={0.6} />
           </RoundedBox>
@@ -1195,11 +1315,11 @@ function Ready({ onReady }: { onReady: () => void }) {
   return null;
 }
 
-function Room({ active, project, reduced, canBrowse, onProject, onSelect, onClose, onReady }: SceneProps) {
+function Room({ active, project, reduced, lite, eco, canBrowse, onProject, onSelect, onClose, onReady }: SceneProps) {
   const [hovered, setHovered] = useState<SpotId | null>(null);
   const hot = { hovered, active, onHover: setHovered, onSelect };
   // Fixed at start: the shadows are baked once, so their resolution must not change later.
-  const [shadowSize] = useState(2048);
+  const [shadowSize] = useState(lite ? 1024 : 2048);
 
   useEffect(() => {
     for (const spot of spots) {
@@ -1215,16 +1335,19 @@ function Room({ active, project, reduced, canBrowse, onProject, onSelect, onClos
     <>
       <color attach="background" args={["#ece6dc"]} />
       <CameraRig active={active} reduced={reduced} />
-      <hemisphereLight args={["#ffffff", "#e6d5b8", 0.55]} />
+      {/* Without the environment the sky light carries the fill; 2.65 matches its brightness. */}
+      <hemisphereLight args={["#ffffff", "#e6d5b8", eco ? 2.65 : 0.55]} />
       <directionalLight position={[7, 11, -4]} intensity={1.7} color="#fff1dc" castShadow shadow-mapSize={[shadowSize, shadowSize]} shadow-bias={-0.0004} shadow-normalBias={0.03}>
         <orthographicCamera attach="shadow-camera" args={[-10, 10, 10, -10, 1, 40]} />
       </directionalLight>
+      {!eco && (
       <Environment resolution={64} environmentIntensity={0.42}>
         <color attach="background" args={["#f1ebe1"]} />
         <Lightformer form="rect" intensity={3} position={[0, 10, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[20, 20, 1]} color="#ffffff" />
         <Lightformer form="rect" intensity={2} position={[10, 4, 6]} rotation={[0, -Math.PI / 2, 0]} scale={[14, 8, 1]} color="#ffe9cc" />
         <Lightformer form="rect" intensity={1.2} position={[0, 4, 12]} rotation={[0, Math.PI, 0]} scale={[14, 8, 1]} color="#e6f1ff" />
       </Environment>
+      )}
 
       <group
         onClick={event => {
@@ -1233,21 +1356,24 @@ function Room({ active, project, reduced, canBrowse, onProject, onSelect, onClos
           if (active) onClose();
         }}
       >
-        <Shell />
-        <WallDecor />
-        <WallName />
+        <StaticBatch>
+          <Shell />
+          <WallDecor />
+          <WallName />
+        </StaticBatch>
       </group>
-      <WindowView reduced={reduced} />
-      <FloorLamp />
-      <Clock reduced={reduced} />
-      <Chair />
-      <Armchair />
-      <Plant position={[-4.25, 0, -3.3]} scale={1.15} />
-      <Plant position={[6.1, 0, -3.05]} scale={1} />
-
-      <group position={[1.1, 0, -3.5]}>
-        <Desk />
-      </group>
+      <StaticBatch>
+        <WindowView reduced={reduced} lite={lite} />
+        <FloorLamp />
+        <Clock reduced={reduced} />
+        <Chair />
+        <Armchair />
+        <Plant position={[-4.25, 0, -3.3]} scale={1.15} />
+        <Plant position={[6.1, 0, -3.05]} scale={1} />
+        <group position={[1.1, 0, -3.5]}>
+          <Desk />
+        </group>
+      </StaticBatch>
       <Hotspot id="projects" position={[1.1, 0, -3.5]} {...hot}>
         <Monitor project={project} browsing={canBrowse && active === "projects"} onProject={onProject} />
       </Hotspot>
@@ -1285,15 +1411,29 @@ function RendererTone() {
   return null;
 }
 
-export default function RoomScene(props: Omit<SceneProps, "canBrowse"> & { lite: boolean }) {
-  const { lite, ...scene } = props;
-  // One fixed, sharp picture: the resolution always matches the screen (up to 2x)
-  // and never changes while the page is open, so nothing goes soft mid-visit.
-  // There is no post-processing pass, which is what pays for the extra pixels.
+/** Most pixels the canvas may draw, so huge or very dense screens stay smooth. */
+const PIXEL_BUDGET = { full: 5_000_000, lite: 2_600_000 };
+
+function startingDpr(lite: boolean) {
+  const cap = lite ? 1.5 : 2;
+  const fits = Math.sqrt((lite ? PIXEL_BUDGET.lite : PIXEL_BUDGET.full) / Math.max(1, window.innerWidth * window.innerHeight));
+  return Math.max(1, Math.min(window.devicePixelRatio || 1, cap, fits));
+}
+
+export default function RoomScene(props: Omit<SceneProps, "canBrowse" | "eco">) {
+  const { lite } = props;
+  // Start as sharp as the screen allows (up to 2x, within a pixel budget). Each time
+  // the device fails to hold a steady frame rate, quality steps down once and never
+  // back up, so the picture settles instead of flickering between qualities.
+  // Step 1 swaps the reflected environment for a plain sky light, which looks almost
+  // the same and is the most expensive thing per pixel. Later steps lower resolution.
+  const [start] = useState(() => startingDpr(lite));
+  const [step, setStep] = useState(lite ? 1 : 0);
+  const dpr = Math.max(Math.min(start, 1), start * Math.pow(0.8, Math.max(0, step - 1)));
   return (
     <Canvas
       shadows
-      dpr={[1, lite ? 1.75 : 2]}
+      dpr={dpr}
       camera={{ fov: 35, near: 0.1, far: 80, position: [14, 11, 18] }}
       gl={{ antialias: true, powerPreference: "high-performance", stencil: false }}
       fallback={
@@ -1302,8 +1442,9 @@ export default function RoomScene(props: Omit<SceneProps, "canBrowse"> & { lite:
         </p>
       }
     >
+      <PerformanceMonitor bounds={() => [45, 1000]} onDecline={() => setStep(value => Math.min(value + 1, 6))} />
       <Suspense fallback={null}>
-        <Room {...scene} canBrowse={!lite} />
+        <Room {...props} eco={step > 0} canBrowse={!lite} />
         <RendererTone />
       </Suspense>
     </Canvas>
